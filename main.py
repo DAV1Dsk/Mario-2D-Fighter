@@ -238,14 +238,14 @@ def draw():
         if mario.fireball_cooldown > 0:
             screen.draw.text(f"Fireball: {mario.fireball_cooldown}", (50, 90), color="white", fontsize=16)
         else:
-            screen.draw.text("Fireball: READY (Z)", (50, 90), color="white", fontsize=16)
+            screen.draw.text("Fireball: READY (X)", (50, 90), color="white", fontsize=16)
     
     elif game_state == "menu":
         screen.draw.text("Mario vs Bowser", (WIDTH//2 - 150, HEIGHT//2 - 50), 
                         color="white", fontsize=48)
         screen.draw.text("Press SPACE to start", (WIDTH//2 - 120, HEIGHT//2 + 50), 
                         color="white", fontsize=24)
-        screen.draw.text("Z = Fireball", (WIDTH//2 - 60, HEIGHT//2 + 100), 
+        screen.draw.text("X = Fireball", (WIDTH//2 - 60, HEIGHT//2 + 100), 
                         color="white", fontsize=18)
 
 def on_key_down(key):
@@ -264,7 +264,7 @@ def on_key_down(key):
         elif key == keys.UP and mario.on_ground:
             mario.velocity_y = -12
             mario.on_ground = False
-        elif key == keys.Z:  # Fireball attack
+        elif key == keys.X:  # Fireball attack
             mario.shoot_fireball()
 
 def on_key_up(key):
