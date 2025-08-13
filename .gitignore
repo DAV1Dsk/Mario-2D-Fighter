@@ -28,7 +28,6 @@ wheels/
 # Large image files (keep only the ones we need)
 Images/
 *.jpg
-*.png
 *.jpeg
 *.gif
 *.bmp
