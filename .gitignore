@@ -27,8 +27,8 @@ wheels/
 
 # Large image files (keep only the ones we need)
 Images/
-
 *.jpg
+*.png
 *.jpeg
 *.gif
 *.bmp
@@ -37,6 +37,20 @@ Images/
 !images/stand1.png
 !images/stand2.png
 !images/stand3.png
+!images/bowser_hit.png
+!images/bowser_launched.png
+!images/bowser_stand 1.png
+!images/bowser_stand 2.png
+!images/bowser_stand 3.png
+!images/bowser_stand 4.png
+!images/bowser_stand 5.png
+!images/bowser_stand 6.png
+!images/bowser_stand 7.png
+!images/mario_fireball.png
+!images/mario_fireball_charge.png
+!images/mario_hammer_attack.png
+!images/mario_special.png
+!images/peachs_castle.png
 
 # macOS
 .DS_Store
