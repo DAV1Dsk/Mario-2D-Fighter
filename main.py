@@ -6,15 +6,16 @@ import math
 import pygame
 
 # Game configuration
-WIDTH = 800
-HEIGHT = 600
+WIDTH = 1550
+HEIGHT = 840
+
 TITLE = "Mario vs Bowser - 2D Fighting Game"
 # Nudge the perceived ground a bit lower to sit on the grass edge
 GROUND_NUDGE_PX = 12
 FLOOR_Y = HEIGHT - 50 + GROUND_NUDGE_PX
 # Additional per-character floor nudges to align feet with the grass/bush base
-MARIO_FLOOR_OFFSET = 10
-BOWSER_FLOOR_OFFSET = 10
+MARIO_FLOOR_OFFSET = -11
+BOWSER_FLOOR_OFFSET = -11
 ATTACK_HITSTUN_BUFFER_TICKS = 8  # extra ticks after attack ends
 CHARGE_OFFSET_X = 80  # base pixels to the right (left if facing left)
 CHARGE_OFFSET_Y = 7  # base pixels upward from Mario's center (positive is down)
@@ -67,9 +68,9 @@ def _prepare_background():
 class Mario:
     def __init__(self):
         # Store original spawn coordinates as reference points
-        self.spawn_x = 200
+        self.spawn_x = 450
         self.spawn_y = FLOOR_Y
-        self.x = 200
+        self.x = 450
         self.y = FLOOR_Y  # temporary; will be corrected after actor is created
         self.width = 64
         self.height = 64
@@ -77,7 +78,7 @@ class Mario:
         self.velocity_y = 0
         self.on_ground = True
         self.facing_right = True  # Mario faces right (towards Bowser)
-        self.health = 100
+        self.health = 500
         self.ultimate_meter = 0
         
         # Animation state
@@ -123,6 +124,26 @@ class Mario:
         self.special_charge_fx_actor = Actor("mario_fireball_charge")
         self.charge_fx_x = None
         self.charge_fx_y = None
+        # Track which side Bowser is on to update facing only when crossing sides
+        self._last_bowser_side = None  # -1 if Bowser is left of Mario, +1 if right
+
+        # Block state
+        self.is_blocking = False
+        self.block_frames = []
+        self.block_index = 0
+        self.block_timer = 0
+        self.block_speed = 6
+        
+        # Hitstun and hit animation (similar to Bowser)
+        self.is_in_hitstun = False
+        self.hitstun_timer = 0
+        self.hitstun_duration = 20
+        self.hitstun_linger = 10
+        self.hit_frames = []
+        self.hit_anim_timer = 0
+        self.hit_anim_speed = 5
+        self.hit_anim_index = 0
+        self.is_playing_hit = False
         
         # Create actor for current frame
         self.actor = Actor(self.stand_frames[0])
@@ -150,6 +171,8 @@ class Mario:
         self._prepare_attack_frames()
         self._prepare_special_frames()
         self._prepare_charge_fx_frames()
+        self._prepare_block_frames()
+        self._prepare_hit_frames()
     
     def update(self):
         # Apply gravity
@@ -157,9 +180,18 @@ class Mario:
             self.velocity_y += 0.6
         
         # Update position
+        if self.is_in_hitstun:
+            # Lock horizontal during hitstun
+            self.velocity_x = 0
         self.x += self.velocity_x
         self.y += self.velocity_y
         
+        # Always face Bowser every frame
+        try:
+            self.facing_right = (bowser.x >= self.x)
+        except Exception:
+            pass
+
         # Ground collision
         mario_floor = FLOOR_Y + MARIO_FLOOR_OFFSET
         if self.y + self.half_height >= mario_floor:  # Ground level aligned with background floor + offset
@@ -168,7 +200,14 @@ class Mario:
             self.on_ground = True
         
         # Update animation
-        if self.is_attacking and self.attack_frames:
+        if self.is_blocking and self.block_frames:
+            # Advance to last frame, then hold
+            self.block_timer += 1
+            if self.block_timer >= self.block_speed:
+                self.block_timer = 0
+                if self.block_index < len(self.block_frames) - 1:
+                    self.block_index += 1
+        elif self.is_attacking and self.attack_frames:
             self.attack_timer += 1
             if self.attack_timer >= self.attack_speed:
                 self.attack_timer = 0
@@ -219,8 +258,31 @@ class Mario:
                 self.animation_timer = 0
                 self.animation_frame = (self.animation_frame + 1) % len(self.stand_frames)
                 
-        # Pick current image (special overrides attack, which overrides stand)
-        if self.is_special and (self.special_charge_frames or self.special_release_frames):
+        # Pick current image: block > hit > special > attack > stand
+        if self.is_blocking and self.block_frames:
+            current_surface = self.block_frames[self.block_index]
+            feet_y = self.y + self.half_height
+            self.half_height = current_surface.get_height() / 2
+            self.half_width = current_surface.get_width() / 2
+            self.y = feet_y - self.half_height
+            surf = current_surface
+            if not self.facing_right:
+                surf = pygame.transform.flip(surf, True, False)
+            self.actor._surf = surf
+            # Match actor dimensions
+            self.actor.width = current_surface.get_width()
+            self.actor.height = current_surface.get_height()
+        elif self.is_playing_hit and self.hit_frames:
+            current_surface = self.hit_frames[self.hit_anim_index]
+            feet_y = self.y + self.half_height
+            self.half_height = current_surface.get_height() / 2
+            self.half_width = current_surface.get_width() / 2
+            self.y = feet_y - self.half_height
+            surf = current_surface
+            if not self.facing_right:
+                surf = pygame.transform.flip(surf, True, False)
+            self.actor._surf = surf
+        elif self.is_special and (self.special_charge_frames or self.special_release_frames):
             frames = self.special_charge_frames if self.special_phase == "charge" else self.special_release_frames
             idx = max(0, min(self.special_index, len(frames) - 1))
             current_surface = frames[idx]
@@ -228,11 +290,20 @@ class Mario:
             self.half_height = current_surface.get_height() / 2
             self.half_width = current_surface.get_width() / 2
             self.y = feet_y - self.half_height
-            self.actor._surf = current_surface
+            surf = current_surface
+            if not self.facing_right:
+                surf = pygame.transform.flip(surf, True, False)
+            self.actor._surf = surf
             # Update actor dimensions to match current frame (like Bowser does)
             self.actor.width = current_surface.get_width()
             self.actor.height = current_surface.get_height()
-        elif self.is_attacking and self.attack_frames and not self.is_special:
+        elif self.is_playing_hit and self.hit_frames:
+            self.hit_anim_timer += 1
+            if self.hit_anim_timer >= self.hit_anim_speed:
+                self.hit_anim_timer = 0
+                if self.hit_anim_index < len(self.hit_frames) - 1:
+                    self.hit_anim_index += 1
+        elif self.is_attacking and self.attack_frames and not self.is_special and not self.is_blocking:
             current_surface = self.attack_frames[self.attack_frame_index]
             # On first attack frame, record feet anchor and enable vertical lock
             if not self.attack_lock_vertical:
@@ -243,8 +314,11 @@ class Mario:
             self.half_height = current_surface.get_height() / 2
             self.half_width = current_surface.get_width() / 2
             self.y = feet_y - self.half_height
-            # Swap actor surface to tightly-cropped frame
-            self.actor._surf = current_surface
+            # Swap actor surface to tightly-cropped frame with orientation
+            surf = current_surface
+            if not self.facing_right:
+                surf = pygame.transform.flip(surf, True, False)
+            self.actor._surf = surf
             # Update actor dimensions to match current frame (like Bowser does)
             self.actor.width = current_surface.get_width()
             self.actor.height = current_surface.get_height()
@@ -255,7 +329,10 @@ class Mario:
                 self.half_height = current_surface.get_height() / 2
                 self.half_width = current_surface.get_width() / 2
                 self.y = feet_y - self.half_height
-                self.actor._surf = current_surface
+                surf = current_surface
+                if not self.facing_right:
+                    surf = pygame.transform.flip(surf, True, False)
+                self.actor._surf = surf
                 # Update actor dimensions to match current frame (like Bowser does)
                 self.actor.width = current_surface.get_width()
                 self.actor.height = current_surface.get_height()
@@ -284,9 +361,31 @@ class Mario:
         # Update actor position
         self.actor.pos = (self.x, self.y)
         
-        # Flip sprite based on facing direction
-        # All Mario sprites face right by default
-        self.actor.flip_x = not self.facing_right
+        # We already oriented surfaces directly; do not flip again
+        self.actor.flip_x = False
+        
+        # Hitstun tick & linger
+        if self.is_in_hitstun:
+            self.hitstun_timer -= 1
+            if self.hitstun_timer <= 0:
+                self.is_in_hitstun = False
+                self._start_hit_linger()
+        else:
+            if self.is_playing_hit:
+                if getattr(self, '_hit_linger_timer', 0) > 0:
+                    self._hit_linger_timer -= 1
+                else:
+                    self.is_playing_hit = False
+
+    def start_hitstun_anim(self):
+        if self.hit_frames:
+            self.is_playing_hit = True
+            self.hit_anim_index = 0
+            self.hit_anim_timer = 0
+            self._hit_linger_timer = self.hitstun_linger
+
+    def _start_hit_linger(self):
+        self._hit_linger_timer = self.hitstun_linger
     
     def draw(self):
         # Draw Mario base sprite first
@@ -368,6 +467,91 @@ class Mario:
             self.attack_frames = frames
         except Exception:
             self.attack_frames = []
+
+    def _prepare_hit_frames(self):
+        try:
+            sheet = pygame.image.load("images/mario_hit.png").convert()
+            bg = sheet.get_at((0, 0))
+            sheet.set_colorkey(bg)
+            sw, sh = sheet.get_width(), sheet.get_height()
+            # Detect non-background column runs across the sheet
+            non_bg_cols = []
+            for x in range(sw):
+                col_has = False
+                for y in range(sh):
+                    if sheet.get_at((x, y)) != bg:
+                        col_has = True
+                        break
+                non_bg_cols.append(col_has)
+            ranges = []
+            in_run = False
+            start = 0
+            for x, has in enumerate(non_bg_cols):
+                if has and not in_run:
+                    in_run = True
+                    start = x
+                elif not has and in_run:
+                    in_run = False
+                    ranges.append((start, x - 1))
+            if in_run:
+                ranges.append((start, sw - 1))
+            frames = []
+            for x0, x1 in ranges:
+                # Tight vertical crop for this frame slice
+                min_y, max_y = sh, 0
+                for x in range(x0, x1 + 1):
+                    for y in range(sh):
+                        if sheet.get_at((x, y)) != bg:
+                            if y < min_y: min_y = y
+                            if y > max_y: max_y = y
+                if min_y <= max_y:
+                    rect = pygame.Rect(x0, min_y, (x1 - x0 + 1), (max_y - min_y + 1))
+                    frame = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+                    frame.blit(sheet, (0, 0), rect)
+                    # Further crop to largest connected component to strip lingering pixels
+                    try:
+                        tmp = frame.convert()
+                        tmp.set_colorkey(tmp.get_at((0, 0)))
+                        mask = pygame.mask.from_surface(tmp)
+                        w, h = frame.get_width(), frame.get_height()
+                        visited = set()
+                        largest_bounds = None
+                        largest_size = 0
+                        for ix in range(w):
+                            for iy in range(h):
+                                if mask.get_at((ix, iy)) and (ix, iy) not in visited:
+                                    stack = [(ix, iy)]
+                                    visited.add((ix, iy))
+                                    minx = maxx = ix
+                                    miny = maxy = iy
+                                    size = 0
+                                    while stack:
+                                        cx, cy = stack.pop()
+                                        size += 1
+                                        if cx < minx: minx = cx
+                                        if cx > maxx: maxx = cx
+                                        if cy < miny: miny = cy
+                                        if cy > maxy: maxy = cy
+                                        for nx, ny in ((cx - 1, cy), (cx + 1, cy), (cx, cy - 1), (cx, cy + 1)):
+                                            if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in visited and mask.get_at((nx, ny)):
+                                                visited.add((nx, ny))
+                                                stack.append((nx, ny))
+                                    if size > largest_size:
+                                        largest_size = size
+                                        largest_bounds = (minx, miny, maxx, maxy)
+                        if largest_bounds:
+                            xA, yA, xB, yB = largest_bounds
+                            rect2 = pygame.Rect(xA, yA, xB - xA + 1, yB - yA + 1)
+                            tight = pygame.Surface((rect2.width, rect2.height), pygame.SRCALPHA)
+                            tight.blit(frame, (0, 0), rect2)
+                            frames.append(tight.convert_alpha())
+                        else:
+                            frames.append(frame.convert_alpha())
+                    except Exception:
+                        frames.append(frame.convert_alpha())
+            self.hit_frames = frames
+        except Exception:
+            self.hit_frames = []
 
     def _prepare_stand_frames(self):
         frames = []
@@ -535,13 +719,116 @@ class Mario:
 
     def _compute_charge_offsets(self):
         # Per-frame fine offsets to better center in gloves
-        per_frame_dx = [0, 2, 3, 4, 5, 6, 6, 6]
-        per_frame_dy = [0, 0, 1, 1, 2, 2, 2, 2]
+        # Tune so the FX sits on Mario's right-hand white glove
+        # Nudge more to glove center
+        per_frame_dx = [10, 12, 13, 14, 14, 15, 15, 15]
+        per_frame_dy = [-1, -1, 0, 0, 1, 1, 1, 1]
         idx = min(self.special_charge_fx_index, len(per_frame_dx) - 1)
         base_dx = CHARGE_OFFSET_X + per_frame_dx[idx]
         dx = base_dx if self.facing_right else -base_dx
         dy = CHARGE_OFFSET_Y + per_frame_dy[idx]
+        # Global nudge: move right and up on screen (current left-facing kept as-is)
+        dx += 80
+        # When facing right, pull 75px left to be closer to glove center
+        if self.facing_right:
+            dx -= 155
+        dy -= 10
         return dx, dy
+
+    def _prepare_block_frames(self):
+        try:
+            sheet = pygame.image.load("images/mario_block.png").convert()
+            bg = sheet.get_at((0, 0))
+            sheet.set_colorkey(bg)
+            sw, sh = sheet.get_width(), sheet.get_height()
+            # Detect non-background columns to find per-frame horizontal slices
+            non_bg_cols = []
+            for x in range(sw):
+                col_has = False
+                for y in range(sh):
+                    if sheet.get_at((x, y)) != bg:
+                        col_has = True
+                        break
+                non_bg_cols.append(col_has)
+            ranges = []
+            in_run = False
+            start = 0
+            for x, has in enumerate(non_bg_cols):
+                if has and not in_run:
+                    in_run = True
+                    start = x
+                elif not has and in_run:
+                    in_run = False
+                    ranges.append((start, x - 1))
+            if in_run:
+                ranges.append((start, sw - 1))
+            frames = []
+            for x0, x1 in ranges:
+                # Tight vertical crop for this frame
+                min_y, max_y = sh, 0
+                for x in range(x0, x1 + 1):
+                    for y in range(sh):
+                        if sheet.get_at((x, y)) != bg:
+                            if y < min_y: min_y = y
+                            if y > max_y: max_y = y
+                if min_y <= max_y:
+                    rect = pygame.Rect(x0, min_y, (x1 - x0 + 1), (max_y - min_y + 1))
+                    frame = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+                    frame.blit(sheet, (0, 0), rect)
+                    # Further crop to the largest connected component to remove lingering parts
+                    try:
+                        tmp = frame.convert()
+                        tmp.set_colorkey(tmp.get_at((0, 0)))
+                        mask = pygame.mask.from_surface(tmp)
+                        w, h = frame.get_width(), frame.get_height()
+                        visited = set()
+                        largest_bounds = None
+                        largest_size = 0
+                        for ix in range(w):
+                            for iy in range(h):
+                                if mask.get_at((ix, iy)) and (ix, iy) not in visited:
+                                    stack = [(ix, iy)]
+                                    visited.add((ix, iy))
+                                    minx = maxx = ix
+                                    miny = maxy = iy
+                                    size = 0
+                                    while stack:
+                                        cx, cy = stack.pop()
+                                        size += 1
+                                        if cx < minx: minx = cx
+                                        if cx > maxx: maxx = cx
+                                        if cy < miny: miny = cy
+                                        if cy > maxy: maxy = cy
+                                        for nx, ny in ((cx - 1, cy), (cx + 1, cy), (cx, cy - 1), (cx, cy + 1)):
+                                            if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in visited and mask.get_at((nx, ny)):
+                                                visited.add((nx, ny))
+                                                stack.append((nx, ny))
+                                    if size > largest_size:
+                                        largest_size = size
+                                        largest_bounds = (minx, miny, maxx, maxy)
+                        if largest_bounds:
+                            xA, yA, xB, yB = largest_bounds
+                            rect2 = pygame.Rect(xA, yA, xB - xA + 1, yB - yA + 1)
+                            tight = pygame.Surface((rect2.width, rect2.height), pygame.SRCALPHA)
+                            tight.blit(frame, (0, 0), rect2)
+                            frames.append(tight.convert_alpha())
+                        else:
+                            frames.append(frame.convert_alpha())
+                    except Exception:
+                        frames.append(frame.convert_alpha())
+            # Fallback to square slices
+            if not frames:
+                fw = sh if sh > 0 else sw
+                if fw > 0:
+                    count = max(1, sw // fw)
+                    for i in range(count):
+                        rect = pygame.Rect(i * fw, 0, fw, sh)
+                        frame = pygame.Surface((fw, sh), pygame.SRCALPHA)
+                        frame.blit(sheet, (0, 0), rect)
+                        frames.append(frame.convert_alpha())
+            self.block_frames = frames
+        except Exception:
+            self.block_frames = []
 
     def _spawn_fireball(self):
         direction = 1 if self.facing_right else -1
@@ -570,8 +857,10 @@ class Mario:
         # Calculate offset from spawn position
         offset_x = self.x - self.spawn_x
         offset_y = self.y - self.spawn_y
+        # While blocking to the right, nudge hurtbox right for glove-forward stance
+        block_dx = 20 if (self.is_blocking and self.facing_right) else 0
         # Apply offset to spawn-based positioning plus calibration
-        x = int(self.spawn_x - width / 2 + offset_x + MARIO_BOX_OFFSET_X)
+        x = int(self.spawn_x - width / 2 + offset_x + MARIO_BOX_OFFSET_X + block_dx)
         y = int(self.spawn_y - height / 2 + offset_y + MARIO_BOX_OFFSET_Y)
         return Rect(x, y, width, height)
 
@@ -616,8 +905,9 @@ class Mario:
             # Calculate offset from spawn position
             offset_x = self.x - self.spawn_x
             offset_y = self.y - self.spawn_y
+            block_dx = 20 if (self.is_blocking and self.facing_right) else 0
             # Apply offset to spawn-based positioning plus calibration
-            top_left_x = int(self.spawn_x - surf.get_width() / 2 + offset_x + MARIO_BOX_OFFSET_X) + r.x
+            top_left_x = int(self.spawn_x - surf.get_width() / 2 + offset_x + MARIO_BOX_OFFSET_X + block_dx) + r.x
             top_left_y = int(self.spawn_y - surf.get_height() / 2 + offset_y + MARIO_BOX_OFFSET_Y) + r.y
             return Rect(top_left_x, top_left_y, r.w, r.h)
         except Exception:
@@ -632,15 +922,21 @@ class Mario:
             return None
         try:
             raw = self.attack_frames[self.attack_frame_index]
-            # Match on-screen orientation (actor flips left at draw time)
+            # Build oriented surface explicitly (do not rely on actor flip)
             surf = raw if self.facing_right else pygame.transform.flip(raw, True, False)
             # Build mask from yellow pixels (hammer head)
             mask = pygame.mask.from_threshold(surf, HAMMER_YELLOW_COLOR, HAMMER_YELLOW_TOLERANCE)
             if mask.count() == 0:
                 # Fallback to full surface if detection fails
                 mask = pygame.mask.from_surface(surf)
-            # Revert to pre-change anchoring (use hammer offsets only)
-            base_x = int(self.x - surf.get_width() / 2 + HAMMER_HITBOX_OFFSET_X)
+            # Position base depending on facing so mask stays on correct side
+            if self.facing_right:
+                base_x = int(self.x - surf.get_width() / 2 + HAMMER_HITBOX_OFFSET_X)
+            else:
+                # Mirror anchoring horizontally around center
+                base_x = int(self.x - surf.get_width() / 2 - HAMMER_HITBOX_OFFSET_X)
+            # Shift hammer hitbox 151px to the left on screen
+            base_x -= 151
             base_y = int(self.y - surf.get_height() / 2 + HAMMER_HITBOX_OFFSET_Y)
             return (mask, base_x, base_y)
         except Exception:
@@ -656,18 +952,15 @@ class Mario:
         width = int(frame_width * 0.8)
         height = int(frame_height * 0.7)
         forward = frame_width * 0.5
-        # Calculate offset from spawn position
-        offset_x = self.x - self.spawn_x
-        offset_y = self.y - self.spawn_y
-        # Apply offset to spawn-based positioning plus calibration
-        center_x = self.spawn_x + (forward if self.facing_right else -forward) + offset_x + MARIO_BOX_OFFSET_X
+        # Compute center relative to current position; mirror horizontally by facing
+        center_x = self.x + (forward if self.facing_right else -forward) + MARIO_BOX_OFFSET_X
         x = int(center_x - width / 2)
-        y = int(self.spawn_y - height / 2 + offset_y + MARIO_BOX_OFFSET_Y)
+        y = int(self.y - height / 2 + MARIO_BOX_OFFSET_Y)
         return Rect(x, y, width, height)
 
 class Bowser:
     def __init__(self):
-        self.x = 600  # Start on the right side, opposite to Mario
+        self.x = 850  # Start on the right side, opposite to Mario
         self.y = FLOOR_Y  # temporary; will be corrected after actor is created
         self.width = 64
         self.height = 64
@@ -675,7 +968,7 @@ class Bowser:
         self.velocity_y = 0
         self.on_ground = True
         self.facing_right = False  # Bowser starts facing left (toward Mario)
-        self.health = 100
+        self.health = 500
         self.ultimate_meter = 0
         # Hitstun state
         self.is_in_hitstun = False
@@ -711,7 +1004,7 @@ class Bowser:
         self.is_attacking = False
         self.attack_frame_index = 0
         self.attack_timer = 0
-        self.attack_speed = 6  # lower is faster
+        self.attack_speed = 10  # lower is faster (higher = slower)
         self.attack_has_hit = False
         
         # New flameblast attack system
@@ -726,6 +1019,8 @@ class Bowser:
         self.flameblast_stream_duration = 60  # 1 second at 60 FPS
         self.flameblast_stream_timer = 0
         self.flameblast_has_hit = False
+        # Lock Bowser's movement during stream phase
+        self.flame_lock_movement = False
         # Add charging state variables
         self.is_charging = False
         self.charge_start_time = 0
@@ -742,11 +1037,21 @@ class Bowser:
         # Periodic damage while Mario is in the flame
         self._flame_collide_ticks = 0
         self.flame_damage_interval = 12  # 0.2 seconds at 60 FPS
+        # Track which side Mario is on to update facing only when crossing sides
+        self._last_mario_side = None  # -1 if Mario is left of Bowser, +1 if right
+        
+        # Block state
+        self.is_blocking = False
+        self.block_frames = []
+        self.block_index = 0
+        self.block_timer = 0
+        self.block_speed = 6
         
         # Prepare animation frames
         self._prepare_hit_frames()
         self._prepare_punch_frames()
         self._prepare_flameblast_frames()
+        self._prepare_block_frames()
     
     def update(self):
         # Apply gravity
@@ -754,8 +1059,12 @@ class Bowser:
             self.velocity_y += 0.6
         
         # Update position
-        if not self.is_in_hitstun:
+        if not self.is_in_hitstun and not (self.is_flameblasting and self.flameblast_phase == "stream" and self.flame_lock_movement):
             self.x += self.velocity_x
+        else:
+            # Hard-lock horizontal movement during flame stream
+            if self.is_flameblasting and self.flameblast_phase == "stream" and self.flame_lock_movement:
+                self.velocity_x = 0
         self.y += self.velocity_y
         
         # Ground collision (Bowser uses slightly lower floor)
@@ -765,15 +1074,20 @@ class Bowser:
             self.velocity_y = 0
             self.on_ground = True
         
-        # Ensure Bowser faces Mario during punch animation
-        if self.is_attacking:
-            try:
-                self.facing_right = (mario.x >= self.x)
-            except Exception:
-                pass
+        # Always face Mario every frame
+        try:
+            self.facing_right = (mario.x >= self.x)
+        except Exception:
+            pass
         
-        # Update animation state machines: hit > flameblast > attack > stand
-        if self.is_playing_hit and self.hit_frames:
+        # Update animation state machines: block > hit > flameblast > attack > stand
+        if self.is_blocking and self.block_frames:
+            self.block_timer += 1
+            if self.block_timer >= self.block_speed:
+                self.block_timer = 0
+                if self.block_index < len(self.block_frames) - 1:
+                    self.block_index += 1
+        elif self.is_playing_hit and self.hit_frames:
             self.hit_anim_timer += 1
             if self.hit_anim_timer >= self.hit_anim_speed:
                 self.hit_anim_timer = 0
@@ -798,7 +1112,7 @@ class Bowser:
                     self.flameblast_index += 1
                     if self.flameblast_index >= len(self.flameblast_charge_frames):
                         self.flameblast_index = self.charge_tail_start
-        elif self.is_flameblasting and (self.flameblast_charge_frames or self.flameblast_release_frames or self.flameblast_stream_frames):
+        elif self.is_flameblasting and (self.flameblast_charge_frames or self.flameblast_release_frames or self.flameblast_stream_frames) and not self.is_blocking:
             self.flameblast_timer += 1
             if self.flameblast_timer >= self.flameblast_speed:
                 self.flameblast_timer = 0
@@ -820,6 +1134,9 @@ class Bowser:
                         # Initialize flame FX animation
                         self.flame_fx_timer = 0
                         self.flame_fx_index = 0
+                        # Lock movement during stream
+                        self.flame_lock_movement = True
+                        self.velocity_x = 0
                 elif self.flameblast_phase == "stream":
                     # Hold the 2nd release sprite for the body; animate flame FX
                     self.flameblast_stream_timer += 1
@@ -831,10 +1148,7 @@ class Bowser:
                             self.flame_fx_index = (self.flame_fx_index + 1) % len(self.flameblast_stream_frames)
                     if self.flameblast_stream_timer >= self.flameblast_stream_duration:
                         # End flameblast attack
-                        self.is_flameblasting = False
-                        self.flameblast_phase = "idle"
-                        self.flameblast_index = 0
-                        self.flameblast_has_hit = False
+                        self._end_flameblast()
         elif self.is_attacking and self.punch_frames:
             self.attack_timer += 1
             if self.attack_timer >= self.attack_speed:
@@ -850,14 +1164,28 @@ class Bowser:
                 self.animation_timer = 0
                 self.animation_frame = (self.animation_frame + 1) % len(self.stand_frames)
         
-        # Pick current image: hit > flameblast > attack > stand
-        if self.is_playing_hit and self.hit_frames:
+        # Pick current image: block > hit > flameblast > attack > stand
+        if self.is_blocking and self.block_frames:
+            current_surface = self.block_frames[self.block_index]
+            feet_y = self.y + self.half_height
+            self.half_height = current_surface.get_height() / 2
+            self.half_width = current_surface.get_width() / 2
+            self.y = feet_y - self.half_height
+            surf = current_surface
+            # Bowser base sprites assumed left-facing → flip when facing right
+            if self.facing_right:
+                surf = pygame.transform.flip(surf, True, False)
+            self.actor._surf = surf
+        elif self.is_playing_hit and self.hit_frames:
             current_surface = self.hit_frames[self.hit_anim_index]
             feet_y = self.y + self.half_height
             self.half_height = current_surface.get_height() / 2
             self.half_width = current_surface.get_width() / 2
             self.y = feet_y - self.half_height
-            self.actor._surf = current_surface
+            surf = current_surface
+            if self.facing_right:
+                surf = pygame.transform.flip(surf, True, False)
+            self.actor._surf = surf
         elif self.is_charging and self.flameblast_charge_frames:
             # Show charge animation while charging
             current_surface = self.flameblast_charge_frames[self.flameblast_index]
@@ -865,7 +1193,10 @@ class Bowser:
             self.half_height = current_surface.get_height() / 2
             self.half_width = current_surface.get_width() / 2
             self.y = feet_y - self.half_height
-            self.actor._surf = current_surface
+            surf = current_surface
+            if self.facing_right:
+                surf = pygame.transform.flip(surf, True, False)
+            self.actor._surf = surf
         elif self.is_flameblasting and (self.flameblast_charge_frames or self.flameblast_release_frames or self.flameblast_stream_frames):
             if self.flameblast_phase == "charge" and self.flameblast_charge_frames:
                 current_surface = self.flameblast_charge_frames[self.flameblast_index]
@@ -883,7 +1214,10 @@ class Bowser:
                 self.half_height = body_surf.get_height() / 2
                 self.half_width = body_surf.get_width() / 2
                 self.y = feet_y - self.half_height
-                self.actor._surf = body_surf
+                surf = body_surf
+                if self.facing_right:
+                    surf = pygame.transform.flip(surf, True, False)
+                self.actor._surf = surf
                 # Recompute actor pos for body
                 self.actor.pos = (self.x, self.y)
                 # Determine last detectable pixel edge and offset flame 10px inward
@@ -910,10 +1244,21 @@ class Bowser:
                 current_surface = None
             else:
                 # Fallback to stand frames if flameblast frames aren't loaded
-                current_surface = self.stand_frames[self.animation_frame]
-                self.actor.image = current_surface
-                self.half_height = self.actor.height / 2
-                self.half_width = self.actor.width / 2
+                # Load stand frame and orient based on facing
+                name = self.stand_frames[self.animation_frame]
+                try:
+                    current_surface = pygame.image.load(f"images/{name}.png").convert_alpha()
+                except Exception:
+                    current_surface = None
+                if current_surface is not None:
+                    feet_y = self.y + self.half_height
+                    self.half_height = current_surface.get_height() / 2
+                    self.half_width = current_surface.get_width() / 2
+                    self.y = feet_y - self.half_height
+                    surf = current_surface
+                    if self.facing_right:
+                        surf = pygame.transform.flip(surf, True, False)
+                    self.actor._surf = surf
                 return
             
             if current_surface is not None:
@@ -922,8 +1267,8 @@ class Bowser:
                 self.half_width = current_surface.get_width() / 2
                 self.y = feet_y - self.half_height
                 self.actor._surf = current_surface
-        elif self.is_attacking and (self.punch_frames_left or self.punch_frames):
-            # Use directional punch frames (left-based sheet): left raw, right flipped
+        elif self.is_attacking and (self.punch_frames_left or self.punch_frames) and not self.is_blocking:
+            # Use directional punch frames (left raw, right flipped)
             if self.punch_frames_left:
                 directional_frames = self.punch_frames_right if self.facing_right else self.punch_frames_left
                 current_surface = directional_frames[self.attack_frame_index]
@@ -933,23 +1278,37 @@ class Bowser:
             self.half_height = current_surface.get_height() / 2
             self.half_width = current_surface.get_width() / 2
             self.y = feet_y - self.half_height
-            self.actor._surf = current_surface
+            surf = current_surface
+            # punch frames are already oriented via directional selection; do not flip here
+            self.actor._surf = surf
         else:
             # Keep Bowser's feet anchored when swapping back to stand frames
             feet_y = self.y + self.half_height
-            self.actor.image = self.stand_frames[self.animation_frame]
-            self.half_height = self.actor.height / 2
-            self.half_width = self.actor.width / 2
+            # Use stand image surface so we can control flip explicitly
+            name = self.stand_frames[self.animation_frame]
+            try:
+                base = pygame.image.load(f"images/{name}.png").convert_alpha()
+            except Exception:
+                base = None
+            if base is not None:
+                self.half_height = base.get_height() / 2
+                self.half_width = base.get_width() / 2
+                self.y = feet_y - self.half_height
+                surf = base
+                if self.facing_right:
+                    surf = pygame.transform.flip(surf, True, False)
+                self.actor._surf = surf
+            else:
+                # fallback to actor.image path
+                self.actor.image = self.stand_frames[self.animation_frame]
+                self.half_height = self.actor.height / 2
+                self.half_width = self.actor.width / 2
             self.y = feet_y - self.half_height
         # Update actor position
         self.actor.pos = (self.x, self.y)
         
-        # Flip sprite based on facing direction
-        if self.is_attacking and self.punch_frames_left:
-            # Using pre-oriented punch frames; do not flip again
-            self.actor.flip_x = False
-        else:
-            self.actor.flip_x = not self.facing_right
+        # We oriented surfaces directly; do not flip again
+        self.actor.flip_x = False
 
         # Tick hitstun
         if self.is_in_hitstun:
@@ -983,21 +1342,14 @@ class Bowser:
                     except Exception:
                         fx_surf = None
             if fx_surf is not None:
-                # Flip for opposite of facing
+                # Orient flame to face Bowser's direction
                 if self.facing_right:
                     fx_surf = pygame.transform.flip(fx_surf, True, False)
-                # Compute top-left so the left/right edge sits slightly left of mouth anchor
                 w, h = fx_surf.get_width(), fx_surf.get_height()
                 if self.facing_right:
-                    left = self.flame_left - 10  # 10px left of edge
+                    left = self.flame_left + 10  # small nudge right for mouth alignment
                 else:
-                    left = self.flame_left - w + 10  # inward when facing left
-                # Additional 20px shift further left
-                left -= 20
-                # Move 20px to the right from current and 5px up
-                left += 20
-                # Apply extra 40px left from current value per request
-                left -= 40
+                    left = self.flame_left - w - 20  # shift 20px further left when facing left
                 top = self.flame_top - h // 2 - 5
                 # Blit directly to screen for reliability
                 screen.surface.blit(fx_surf, (left, top))
@@ -1365,7 +1717,7 @@ class Bowser:
         forward = self.half_width * 0.7
         center_x = self.x + (forward if self.facing_right else -forward)
         x = int(center_x - width / 2)
-        y = int(self.y - height / 2)
+        y = int(self.y - height / 2) - 20
         return Rect(x, y, width, height)
     
     def get_flameblast_hitbox(self):
@@ -1385,6 +1737,12 @@ class Bowser:
             
         center_x = self.x + forward
         x = int(center_x - width / 2)
+        # Nudge the hitbox 35px further right when facing right
+        if self.facing_right:
+            x += 35
+        else:
+            # When facing left, shift 20px further left
+            x -= 20
         # Extend the left edge 40px further to the left without moving the right edge
         x -= 40
         width += 40
@@ -1438,6 +1796,71 @@ class Bowser:
                     frame.blit(sheet, (0, 0), rect)
                     frames.append(frame.convert_alpha())
         return frames
+
+    def _prepare_block_frames(self):
+        try:
+            sheet = pygame.image.load("images/bowser_block.png").convert()
+            bg = sheet.get_at((0, 0))
+            sheet.set_colorkey(bg)
+            sw, sh = sheet.get_width(), sheet.get_height()
+            # Detect contiguous non-background column runs (per-frame slices)
+            non_bg_cols = []
+            for x in range(sw):
+                col_has = False
+                for y in range(sh):
+                    if sheet.get_at((x, y)) != bg:
+                        col_has = True
+                        break
+                non_bg_cols.append(col_has)
+            ranges = []
+            in_run = False
+            start = 0
+            for x, has in enumerate(non_bg_cols):
+                if has and not in_run:
+                    in_run = True
+                    start = x
+                elif not has and in_run:
+                    in_run = False
+                    ranges.append((start, x - 1))
+            if in_run:
+                ranges.append((start, sw - 1))
+            frames = []
+            for x0, x1 in ranges:
+                # Use full sheet height to avoid over-cropping; ensures full sprite visible
+                rect = pygame.Rect(x0, 0, (x1 - x0 + 1), sh)
+                frame = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+                frame.blit(sheet, (0, 0), rect)
+                frames.append(frame.convert_alpha())
+            # Fallback to square slices if detection failed
+            if not frames:
+                fw = sh if sh > 0 else sw
+                if fw > 0:
+                    count = max(1, sw // fw)
+                    for i in range(count):
+                        rect = pygame.Rect(i * fw, 0, fw, sh)
+                        frame = pygame.Surface((fw, sh), pygame.SRCALPHA)
+                        frame.blit(sheet, (0, 0), rect)
+                        frames.append(frame.convert_alpha())
+            # Apply requested reversed order
+            self.block_frames = list(reversed(frames))
+        except Exception:
+            self.block_frames = []
+
+    # --- Flameblast helpers ---
+    def _end_flameblast(self):
+        # Common teardown when stream ends or is canceled
+        self.is_flameblasting = False
+        self.is_charging = False
+        self.charge_start_time = 0
+        self.charge_tail_loop = False
+        self.flameblast_phase = "idle"
+        self.flameblast_index = 0
+        self.flameblast_timer = 0
+        self.flameblast_stream_timer = 0
+        self.flame_fx_timer = 0
+        self.flame_fx_index = 0
+        self.flameblast_has_hit = False
+        self.flame_lock_movement = False
 
 # Create Mario and Bowser instances
 mario = Mario()
@@ -1631,27 +2054,41 @@ def update():
                 btop = int(bowser.y - bsurf.get_height() / 2)
                 # Offset from Mario's mask space to Bowser's mask space
                 off = (bleft - ax, btop - ay)
-                if amask.overlap(bmask, off):
+                if amask.overlap(bmask, off) and not bowser.is_blocking:
                     bowser.health = max(0, bowser.health - 5)
                     bowser.is_in_hitstun = True
                     bowser.hitstun_timer = bowser.hitstun_duration + ATTACK_HITSTUN_BUFFER_TICKS
                     bowser.start_hitstun_anim()
                     mario.attack_has_hit = True
 
-        # Bowser punch attack collision against Mario
+        # Bowser punch attack collision against Mario (disabled if Mario is blocking)
         bowser_hitbox = bowser.get_attack_hitbox() if hasattr(bowser, 'get_attack_hitbox') else None
-        if bowser_hitbox and not bowser.attack_has_hit:
+        if bowser_hitbox and not bowser.attack_has_hit and not mario.is_blocking and not bowser.is_blocking:
             if bowser_hitbox.colliderect(mario.get_hurtbox()):
                 mario.health = max(0, mario.health - 8)  # Bowser hits harder
+                mario.is_in_hitstun = True
+                mario.hitstun_timer = mario.hitstun_duration + ATTACK_HITSTUN_BUFFER_TICKS
+                mario.start_hitstun_anim()
+                # Cancel Mario's current actions while in hitstun
+                mario.is_attacking = False
+                mario.is_special = False
+                mario.is_blocking = False
                 bowser.attack_has_hit = True
         
         # Bowser flameblast attack collision against Mario
         bowser_flameblast_hitbox = bowser.get_flameblast_hitbox() if hasattr(bowser, 'get_flameblast_hitbox') else None
-        if bowser_flameblast_hitbox and bowser.is_flameblasting and bowser.flameblast_phase == "stream":
+        if bowser_flameblast_hitbox and bowser.is_flameblasting and bowser.flameblast_phase == "stream" and not mario.is_blocking and not bowser.is_blocking:
             if bowser_flameblast_hitbox.colliderect(mario.get_hurtbox()):
                 bowser._flame_collide_ticks += 1
                 if bowser._flame_collide_ticks >= bowser.flame_damage_interval:
                     mario.health = max(0, mario.health - 3)
+                    mario.is_in_hitstun = True
+                    mario.hitstun_timer = mario.hitstun_duration + ATTACK_HITSTUN_BUFFER_TICKS
+                    mario.start_hitstun_anim()
+                    # Cancel Mario's current actions while in hitstun
+                    mario.is_attacking = False
+                    mario.is_special = False
+                    mario.is_blocking = False
                     bowser._flame_collide_ticks = 0
             else:
                 # Reset if Mario leaves the flame
@@ -1670,7 +2107,7 @@ def update():
             bow_w, bow_h = bow_surf.get_width(), bow_surf.get_height()
             offset_x = int((bowser.x - bow_w / 2) - fb.left + FIREBALL_HITBOX_OFFSET_X)
             offset_y = int((bowser.y - bow_h / 2) - fb.top + FIREBALL_HITBOX_OFFSET_Y)
-            if fb_mask.overlap(bowser_mask, (offset_x, offset_y)):
+            if fb_mask.overlap(bowser_mask, (offset_x, offset_y)) and not bowser.is_blocking:
                 fb.alive = False
                 bowser.health = max(0, bowser.health - 5)
                 bowser.is_in_hitstun = True
@@ -1750,14 +2187,14 @@ def draw():
             # screen.draw.rect(fb.get_hitbox(), (255, 0, 0))
         
         # Draw Mario health bar with castle-themed colors
-        screen.draw.filled_rect(Rect(50, 50, 200, 20), (139, 69, 19))  # Brown background
-        screen.draw.filled_rect(Rect(50, 50, mario.health * 2, 20), (255, 215, 0))  # Gold health
+        screen.draw.filled_rect(Rect(50, 50, 160, 16), (139, 69, 19))  # Brown background
+        screen.draw.filled_rect(Rect(50, 50, int(mario.health * (160/500)), 16), (255, 215, 0))  # Gold health scaled to 500 max
         screen.draw.text("Mario HP: " + str(mario.health), (50, 30), color="white", fontsize=24)
         
         # Draw Bowser health bar with castle-themed colors
-        screen.draw.filled_rect(Rect(WIDTH - 250, 50, 200, 20), (139, 69, 19))  # Brown background
-        screen.draw.filled_rect(Rect(WIDTH - 250, 50, bowser.health * 2, 20), (255, 69, 0))  # Orange-red health
-        screen.draw.text("Bowser HP: " + str(bowser.health), (WIDTH - 250, 30), color="white", fontsize=24)
+        screen.draw.filled_rect(Rect(WIDTH - 210, 50, 160, 16), (139, 69, 19))  # Brown background
+        screen.draw.filled_rect(Rect(WIDTH - 210, 50, int(bowser.health * (160/500)), 16), (255, 69, 0))  # Orange-red health scaled to 500 max
+        screen.draw.text("Bowser HP: " + str(bowser.health), (WIDTH - 210, 30), color="white", fontsize=24)
     
     elif game_state == "menu":
         # Add semi-transparent overlay for better text readability
@@ -1766,6 +2203,8 @@ def draw():
                         color="white", fontsize=48)
         screen.draw.text("Press SPACE to start", (WIDTH//2 - 120, HEIGHT//2 + 50), 
                         color="white", fontsize=24)
+    
+    
 
 def on_key_down(key):
     global game_state
@@ -1775,6 +2214,8 @@ def on_key_down(key):
     
     if game_state == "playing":
         # Mario controls (WASD keys)
+        if mario.is_in_hitstun:
+            return
         if key == keys.A:
             mario.velocity_x = -3
             mario.facing_right = False
@@ -1784,13 +2225,13 @@ def on_key_down(key):
         elif key == keys.W and mario.on_ground:
             mario.velocity_y = -12
             mario.on_ground = False
-        elif key == keys.Z:
+        elif key == keys.Z and not mario.is_blocking:
             # Trigger Mario hammer attack
             mario.is_attacking = True
             mario.attack_frame_index = 0
             mario.attack_timer = 0
             mario.attack_has_hit = False
-        elif key == keys.X:
+        elif key == keys.X and not mario.is_blocking:
             # Trigger Mario special (charge then fireball)
             mario.is_special = True
             mario.special_phase = "charge"
@@ -1799,8 +2240,15 @@ def on_key_down(key):
             mario.special_has_fired = False
             mario.special_charge_fx_index = 0
             mario.special_charge_fx_timer = 0
+        elif key == keys.C:
+            # Mario block (hold)
+            mario.is_blocking = True
+            mario.block_index = 0
+            mario.block_timer = 0
         
         # Bowser controls (Arrow keys) – disabled during hitstun
+        elif bowser.is_in_hitstun:
+            return
         elif key == keys.LEFT and not bowser.is_in_hitstun:  # Left arrow for left
             bowser.velocity_x = -2  # Bowser is slower than Mario
             bowser.facing_right = False
@@ -1810,7 +2258,7 @@ def on_key_down(key):
         elif key == keys.UP and bowser.on_ground and not bowser.is_in_hitstun:  # Up arrow for jump
             bowser.velocity_y = -9  # Bowser jumps lower than Mario
             bowser.on_ground = False
-        elif key == keys.PERIOD and not bowser.is_in_hitstun and not bowser.is_flameblasting:  # . key for flameblast charge
+        elif key == keys.PERIOD and not bowser.is_in_hitstun and not bowser.is_flameblasting and not bowser.is_blocking:  # . key for flameblast charge
             # Start charging phase
             bowser.is_charging = True
             bowser.charge_start_time = 0
@@ -1818,32 +2266,54 @@ def on_key_down(key):
             bowser.flameblast_timer = 0
             bowser.charge_tail_loop = False
         elif ((getattr(keys, 'SLASH', None) is not None and key == keys.SLASH) or
-              (hasattr(pygame, 'K_SLASH') and key == pygame.K_SLASH)) and not bowser.is_in_hitstun:  # '/' (shift for '?') key for Bowser punch
+              (hasattr(pygame, 'K_SLASH') and key == pygame.K_SLASH)) and not bowser.is_in_hitstun and not bowser.is_blocking:  # '/' key for Bowser punch
             # Snap facing toward Mario before punch starts to ensure first frame is correct
             bowser.facing_right = (mario.x >= bowser.x)
             bowser.is_attacking = True
             bowser.attack_frame_index = 0
             bowser.attack_timer = 0
             bowser.attack_has_hit = False
+        elif key == keys.COMMA:
+            # Bowser block (hold)
+            bowser.is_blocking = True
+            bowser.block_index = 0
+            bowser.block_timer = 0
 
 def on_key_up(key):
     if game_state == "playing":
         # Mario controls (WASD)
-        if key == keys.A and mario.velocity_x < 0:
+        if mario.is_in_hitstun:
+            pass
+        elif key == keys.A and mario.velocity_x < 0:
             mario.velocity_x = 0
         elif key == keys.D and mario.velocity_x > 0:
             mario.velocity_x = 0
+        elif key == keys.C:
+            # Release Mario block
+            mario.is_blocking = False
+            mario.block_index = 0
+            mario.block_timer = 0
         
         # Bowser controls (Arrow keys)
+        elif bowser.is_in_hitstun:
+            pass
         elif key == keys.LEFT and bowser.velocity_x < 0:
             bowser.velocity_x = 0
         elif key == keys.RIGHT and bowser.velocity_x > 0:
             bowser.velocity_x = 0
+        elif key == keys.COMMA:
+            # Release Bowser block
+            bowser.is_blocking = False
+            bowser.block_index = 0
+            bowser.block_timer = 0
         # Bowser flameblast release
         elif key == keys.PERIOD and bowser.is_flameblasting and bowser.flameblast_phase == "charge":
             # Release the . key to fire the flameblast
             bowser.flameblast_phase = "release"
             bowser.flameblast_index = 0
+        elif key == keys.PERIOD and bowser.is_flameblasting and bowser.flameblast_phase == "stream":
+            # Cancel the stream early by pressing PERIOD again
+            bowser._end_flameblast()
         elif key == keys.PERIOD and bowser.is_charging:
             # Release the . key to fire the flameblast (only if held long enough)
             if bowser.charge_start_time >= bowser.min_charge_time:
