@@ -1190,7 +1190,6 @@ class Bowser:
                         # Move to release phase
                         self.flameblast_phase = "release"
                         self.flameblast_index = 0
-                        print(f"[DEBUG] Flameblast phase: charge -> release")
                 elif self.flameblast_phase == "release":
                     if self.flameblast_index < len(self.flameblast_release_frames) - 1:
                         self.flameblast_index += 1
@@ -1199,13 +1198,6 @@ class Bowser:
                         self.flameblast_phase = "stream"
                         self.flameblast_index = 1  # Start from 2nd sprite as requested
                         self.flameblast_stream_timer = 0
-                        print(f"[DEBUG] Flameblast phase: release -> stream")
-                        # Initialize flame FX animation
-                        self.flame_fx_timer = 0
-                        self.flame_fx_index = 0
-                        # Lock movement during stream
-                        self.flame_lock_movement = True
-                        self.velocity_x = 0
                 elif self.flameblast_phase == "stream":
                     # Hold the 2nd release sprite for the body; animate flame FX
                     self.flameblast_stream_timer += 1
@@ -1217,7 +1209,6 @@ class Bowser:
                             self.flame_fx_index = (self.flame_fx_index + 1) % len(self.flameblast_stream_frames)
                     if self.flameblast_stream_timer >= self.flameblast_stream_duration:
                         # End flameblast attack immediately after stream phase
-                        print(f"[DEBUG] Flameblast stream phase ending, ending move. Timer: {self.flameblast_stream_timer}/{self.flameblast_stream_duration}")
                         self._end_flameblast()
         elif self.is_attacking and self.punch_frames:
             self.attack_timer += 1
@@ -1239,18 +1230,13 @@ class Bowser:
             not self.is_flameblasting and
             not self.is_charging and not self.is_attacking and not self.is_blocking and not self.is_playing_hit):
             # Advance walk animation
-            print(f"[DEBUG] Bowser walking animation advancing (velocity_x={self.velocity_x})")
             self.animation_timer += 1
             if self.animation_timer >= self.animation_speed:
                 self.animation_timer = 0
                 self.animation_frame = (self.animation_frame + 1) % len(self.stand_frames)
-                print(f"[DEBUG] Bowser walk frame advanced to {self.animation_frame}")
-        else:
-            print(f"[DEBUG] Bowser walk animation blocked: velocity_x={self.velocity_x}, is_in_hitstun={self.is_in_hitstun}, is_flameblasting={self.is_flameblasting}, phase={self.flameblast_phase}, is_charging={self.is_charging}, is_attacking={self.is_attacking}, is_blocking={self.is_blocking}, is_playing_hit={self.is_playing_hit}")
         
         # Pick current image: block > hit > flameblast > attack > stand
         if self.is_blocking and self.block_frames:
-            print(f"[DEBUG] Bowser sprite: BLOCK (index {self.block_index})")
             current_surface = self.block_frames[self.block_index]
             feet_y = self.y + self.half_height
             self.half_height = current_surface.get_height() / 2
@@ -1262,7 +1248,6 @@ class Bowser:
                 surf = pygame.transform.flip(surf, True, False)
             self.actor._surf = surf
         elif self.is_playing_hit and self.hit_frames:
-            print(f"[DEBUG] Bowser sprite: HIT (index {self.hit_anim_index})")
             current_surface = self.hit_frames[self.hit_anim_index]
             feet_y = self.y + self.half_height
             self.half_height = current_surface.get_height() / 2
@@ -1273,8 +1258,6 @@ class Bowser:
                 surf = pygame.transform.flip(surf, True, False)
             self.actor._surf = surf
         elif self.is_charging and self.flameblast_charge_frames:
-            print(f"[DEBUG] Bowser sprite: FLAMEBLAST CHARGE (index {self.flameblast_index})")
-            # Show charge animation while charging
             current_surface = self.flameblast_charge_frames[self.flameblast_index]
             feet_y = self.y + self.half_height
             self.half_height = current_surface.get_height() / 2
@@ -1285,7 +1268,6 @@ class Bowser:
                 surf = pygame.transform.flip(surf, True, False)
             self.actor._surf = surf
         elif self.is_flameblasting and (self.flameblast_charge_frames or self.flameblast_release_frames or self.flameblast_stream_frames) and self.flameblast_phase != "idle":
-            print(f"[DEBUG] Bowser sprite: FLAMEBLAST {self.flameblast_phase} (index {self.flameblast_index})")
             if self.flameblast_phase == "charge" and self.flameblast_charge_frames:
                 current_surface = self.flameblast_charge_frames[self.flameblast_index]
             elif self.flameblast_phase == "release" and self.flameblast_release_frames:
@@ -1357,13 +1339,11 @@ class Bowser:
                 self.actor._surf = current_surface
         elif self.is_flameblasting and self.flameblast_phase == "idle":
             # Safety check: if flameblast is marked as active but phase is idle, force reset
-            print(f"[DEBUG] WARNING: is_flameblasting=True but phase=idle. Forcing reset.")
             self.is_flameblasting = False
             self.is_charging = False
             self.flameblast_phase = "idle"
             # Fall through to stand frames
         elif self.is_attacking and (self.punch_frames_left or self.punch_frames) and not self.is_blocking:
-            print(f"[DEBUG] Bowser sprite: ATTACK (index {self.attack_frame_index})")
             # Use directional punch frames (left raw, right flipped)
             if self.punch_frames_left:
                 directional_frames = self.punch_frames_right if self.facing_right else self.punch_frames_left
@@ -1378,7 +1358,6 @@ class Bowser:
             # punch frames are already oriented via directional selection; do not flip here
             self.actor._surf = surf
         else:
-            print(f"[DEBUG] Bowser sprite: STAND (index {self.animation_frame})")
             # Keep Bowser's feet anchored when swapping back to stand frames
             feet_y = self.y + self.half_height
             # Use stand image surface so we can control flip explicitly
@@ -1818,11 +1797,8 @@ class Bowser:
         return Rect(x, y, width, height)
     
     def get_flameblast_hitbox(self):
-        print(f"[DEBUG] get_flameblast_hitbox called: is_flameblasting={self.is_flameblasting}, phase={self.flameblast_phase}")
         if not (self.is_flameblasting and self.flameblast_phase == "stream"):
-            print(f"[DEBUG] get_flameblast_hitbox returning None")
             return None
-        print(f"[DEBUG] get_flameblast_hitbox returning hitbox")
         # Create a hitbox extending in front of Bowser for the flame stream
         width = int(self.half_width * 2.0)  # Wider than punch
         height = int(self.half_height * 0.6)  # Taller than punch
@@ -1948,7 +1924,6 @@ class Bowser:
 
     # --- Flameblast helpers ---
     def _end_flameblast(self):
-        print(f"[DEBUG] _end_flameblast called. Current states: is_flameblasting={self.is_flameblasting}, phase={self.flameblast_phase}")
         # Common teardown when stream ends or is canceled
         self.is_flameblasting = False
         self.is_charging = False
@@ -1973,7 +1948,6 @@ class Bowser:
         self.attack_has_hit = False
         self.is_blocking = False
         self.is_playing_hit = False
-        print(f"[DEBUG] _end_flameblast completed. New states: is_flameblasting={self.is_flameblasting}, phase={self.flameblast_phase}")
 
 # Create Mario and Bowser instances
 mario = Mario()
@@ -2153,139 +2127,122 @@ class Fireball:
                     screen.draw.line(pts[i-1], pts[i], (255, 0, 0))
 
 def update():
-    global game_state
+    global DEBUG_SHOW_BOXES, _debug_ticks, _debug_toggle_consumed, DEBUG_STOPTIME, _stop_toggle_consumed, GAME_START_TICKS
+    # Initialize debug clock start
+    if GAME_START_TICKS is None:
+        GAME_START_TICKS = pygame.time.get_ticks()
+    # Handle '1' key hold to toggle debug boxes (Pygame Zero style)
+    if hasattr(keyboard, 'K_1') and keyboard.K_1:
+        _debug_ticks += 1
+        if _debug_ticks >= _DEBUG_HOLD_TICKS and not _debug_toggle_consumed:
+            DEBUG_SHOW_BOXES = not DEBUG_SHOW_BOXES
+            _debug_toggle_consumed = True
+    else:
+        _debug_ticks = 0
+        _debug_toggle_consumed = False
+    # Handle '2' key press to toggle stop-time, but only when debug boxes are shown
+    if DEBUG_SHOW_BOXES and hasattr(keyboard, 'K_2') and keyboard.K_2 and not _stop_toggle_consumed:
+        DEBUG_STOPTIME = not DEBUG_STOPTIME
+        _stop_toggle_consumed = True
+    if not (hasattr(keyboard, 'K_2') and keyboard.K_2):
+        _stop_toggle_consumed = False
+    # Apply stop-time only in debug mode: freeze updates when ON
+    if DEBUG_SHOW_BOXES and DEBUG_STOPTIME:
+        return
+    
     if game_state == "playing":
-        print(f"[DEBUG] === GAME LOOP START ===")
-        print(f"[DEBUG] Mario state: is_in_hitstun={mario.is_in_hitstun}, is_attacking={mario.is_attacking}, is_special={mario.is_special}, is_blocking={mario.is_blocking}")
-        print(f"[DEBUG] Bowser state: is_in_hitstun={bowser.is_in_hitstun}, is_flameblasting={bowser.is_flameblasting}, phase={bowser.flameblast_phase}, is_charging={bowser.is_charging}")
-        
         # Mario update
         mario.update()
-        print(f"[DEBUG] After Mario update: is_in_hitstun={mario.is_in_hitstun}, is_attacking={mario.is_attacking}")
         
         # Bowser update
         bowser.update()
-        print(f"[DEBUG] After Bowser update: is_flameblasting={bowser.is_flameblasting}, phase={bowser.flameblast_phase}")
-        
-        # Fireball updates
-        for fb in fireballs:
-            fb.update()
         
         # Mario hammer attack collision against Bowser
-        if mario.is_attacking and mario.attack_frame_index < len(mario.punch_frames) and not mario.attack_has_hit:
-            print(f"[DEBUG] Mario hammer collision check")
+        if mario.is_attacking and mario.attack_frame_index < len(mario.attack_frames) and not mario.attack_has_hit:
             atk_info = mario.get_attack_mask()
             if atk_info is not None:
                 amask, ax, ay = atk_info
                 bowser_hitbox = bowser.get_hurtbox()
                 if bowser_hitbox:
                     # Convert hitbox to mask for pixel-perfect collision
-                    bsurf = getattr(bowser.actor, '_surf', None)
-                    if bsurf is None:
-                        bsurf = bowser.actor.image
-                    bmask = pygame.mask.from_surface(bsurf)
-                    bleft = int(bowser.x - bsurf.get_width() / 2)
-                    btop = int(bowser.y - bsurf.get_height() / 2)
-                    # Offset from Mario's mask space to Bowser's mask space
-                    off = (bleft - ax, btop - ay)
-                    if amask.overlap(bmask, off) and not bowser.is_blocking:
+                    bowser_surf = bowser.actor.image
+                    bowser_mask = pygame.mask.from_surface(bowser_surf)
+                    # Calculate offset between attack mask and bowser surface
+                    offset_x = int(ax - (bowser.x - bowser_surf.get_width() / 2))
+                    offset_y = int(ay - (bowser.y - bowser_surf.get_height() / 2))
+                    if amask.overlap(bowser_mask, (offset_x, offset_y)):
                         print(f"[DEBUG] Mario hammer hit Bowser!")
-                        # Check for flameblast charge vulnerability
-                        if bowser.is_flameblasting and bowser.flameblast_phase == "charge":
-                            print("[DEBUG] Hammer hit Bowser during flameblast charge!")
-                            print(f"[DEBUG] Bowser state before: is_flameblasting={bowser.is_flameblasting}, is_charging={bowser.is_charging}, flameblast_phase={bowser.flameblast_phase}, is_in_hitstun={bowser.is_in_hitstun}, is_playing_hit={bowser.is_playing_hit}")
-                            hammer_damage = 10  # double (was 5)
-                            hammer_hitstun = (bowser.hitstun_duration + ATTACK_HITSTUN_BUFFER_TICKS) * 2
-                            bowser._end_flameblast()  # End flameblast early if interrupted
-                            print(f"[DEBUG] Bowser state after _end_flameblast: is_flameblasting={bowser.is_flameblasting}, is_charging={bowser.is_charging}, flameblast_phase={bowser.flameblast_phase}, is_in_hitstun={bowser.is_in_hitstun}, is_playing_hit={bowser.is_playing_hit}")
-                        else:
-                            hammer_damage = 5
-                            hammer_hitstun = bowser.hitstun_duration + ATTACK_HITSTUN_BUFFER_TICKS
-                        bowser.health = max(0, bowser.health - hammer_damage)
-                        bowser.is_in_hitstun = True
-                        bowser.hitstun_timer = hammer_hitstun
-                        bowser.start_hitstun_anim()
-                        print(f"[DEBUG] Bowser hitstun triggered: is_in_hitstun={bowser.is_in_hitstun}, is_playing_hit={bowser.is_playing_hit}")
                         mario.attack_has_hit = True
-
-        # Bowser punch attack collision against Mario (disabled if Mario is blocking)
-        bowser_hitbox = bowser.get_attack_hitbox() if hasattr(bowser, 'get_attack_hitbox') else None
-        if bowser_hitbox and not bowser.attack_has_hit and not mario.is_blocking and not bowser.is_blocking:
-            print(f"[DEBUG] Bowser punch collision check")
-            if bowser_hitbox.colliderect(mario.get_hurtbox()):
-                print(f"[DEBUG] Bowser punch hit Mario!")
-                # Check for fireball charge vulnerability
-                if mario.is_special and mario.special_phase == "charge":
-                    punch_damage = 16  # double (was 8)
-                    punch_hitstun = (mario.hitstun_duration + ATTACK_HITSTUN_BUFFER_TICKS) * 2
-                else:
-                    punch_damage = 8
-                    punch_hitstun = mario.hitstun_duration + ATTACK_HITSTUN_BUFFER_TICKS
-                mario.health = max(0, mario.health - punch_damage)
-                mario.is_in_hitstun = True
-                mario.hitstun_timer = punch_hitstun
-                mario.start_hitstun_anim()
-                # Cancel Mario's current actions while in hitstun
-                mario.is_attacking = False
-                mario.is_special = False
-                mario.is_blocking = False
-                bowser.attack_has_hit = True
+                        # Check if Bowser is charging flameblast for double damage
+                        if bowser.is_charging and bowser.is_flameblasting and bowser.flameblast_phase == "charge":
+                            print(f"[DEBUG] Double damage for interrupting flameblast charge!")
+                            bowser.health -= 40  # Double damage
+                            bowser.start_hitstun_anim(60)  # Double hitstun
+                            bowser._end_flameblast()  # End flameblast early
+                        else:
+                            bowser.health -= 20
+                            bowser.start_hitstun_anim(30)
+                        bowser.is_blocking = False  # Force out of block state
         
-        # Bowser flameblast attack collision against Mario
-        bowser_flameblast_hitbox = bowser.get_flameblast_hitbox() if hasattr(bowser, 'get_flameblast_hitbox') else None
+        # Bowser punch attack collision against Mario
+        if bowser.is_attacking and bowser.attack_frame_index < len(bowser.punch_frames) and not bowser.attack_has_hit:
+            atk_info = bowser.get_attack_hitbox()
+            if atk_info is not None:
+                mario_hitbox = mario.get_hurtbox()
+                if mario_hitbox and atk_info.colliderect(mario_hitbox):
+                    print(f"[DEBUG] Bowser punch hit Mario!")
+                    bowser.attack_has_hit = True
+                    # Check if Mario is charging fireball for double damage
+                    if mario.is_special and mario.special_phase == "charge":
+                        print(f"[DEBUG] Double damage for interrupting fireball charge!")
+                        mario.health -= 30  # Double damage
+                        mario.start_hitstun_anim(60)  # Double hitstun
+                        mario._end_special()  # End fireball early
+                    else:
+                        mario.health -= 15
+                        mario.start_hitstun_anim(30)
+        
+        # Mario vs Bowser flameblast collision
+        bowser_flameblast_hitbox = bowser.get_flameblast_hitbox()
         if bowser_flameblast_hitbox and bowser.is_flameblasting and bowser.flameblast_phase == "stream":
-            print(f"[DEBUG] Flameblast collision check: hitbox={bowser_flameblast_hitbox is not None}, is_flameblasting={bowser.is_flameblasting}, phase={bowser.flameblast_phase}")
-            if bowser_flameblast_hitbox.colliderect(mario.get_hurtbox()):
-                print(f"[DEBUG] Mario hit by flameblast!")
-                # Apply damage and hitstun to Mario immediately when hit
-                mario.health = max(0, mario.health - 3)
-                mario.is_in_hitstun = True
-                mario.hitstun_timer = mario.hitstun_duration + ATTACK_HITSTUN_BUFFER_TICKS
-                mario.start_hitstun_anim()
-                # Cancel Mario's current actions while in hitstun
-                mario.is_attacking = False
-                mario.is_special = False
-                mario.is_blocking = False
-                print(f"[DEBUG] Mario hit by flameblast! Health: {mario.health}, Hitstun: {mario.hitstun_timer}")
-            else:
-                # Reset collision state if Mario leaves the flame
-                pass
-
-        # --- Fireball vs Flameblast collision: both end early, no damage ---
-        bowser_flameblast_hitbox = bowser.get_flameblast_hitbox() if hasattr(bowser, 'get_flameblast_hitbox') else None
-        if bowser_flameblast_hitbox and bowser.is_flameblasting and bowser.flameblast_phase == "stream":
-            print(f"[DEBUG] Fireball vs Flameblast collision check")
-            for fb in fireballs:
-                if fb.alive and fb.get_hitbox().colliderect(bowser_flameblast_hitbox):
-                    print(f"[DEBUG] Fireball hit flameblast, ending both")
-                    fb.alive = False
-                    bowser._end_flameblast()
-                    # Do not deal any damage to Mario or Bowser
-
-        # Fireball collisions vs Bowser (using the same bounding box as the green debug outline)
-        for fb in fireballs:
-            if not fb.alive:
-                continue
-            bow_surf = getattr(bowser.actor, '_surf', None)
-            if bow_surf is None:
-                bow_surf = bowser.actor.image
-            base_x = int(bowser.x - bow_surf.get_width() / 2)
-            base_y = int(bowser.y - bow_surf.get_height() / 2)
-            bowser_debug_box = Rect(base_x, base_y, bow_surf.get_width(), bow_surf.get_height())
-            if fb.get_hitbox().colliderect(bowser_debug_box):
+            mario_hitbox = mario.get_hurtbox()
+            if mario_hitbox and bowser_flameblast_hitbox.colliderect(mario_hitbox):
+                if not mario.is_blocking:
+                    print(f"[DEBUG] Mario hit by flameblast!")
+                    mario.health -= 25
+                    mario.start_hitstun_anim(45)
+        
+        # Fireball vs Bowser collision
+        for fb in fireballs[:]:  # Copy list to avoid modification during iteration
+            bowser_hitbox = bowser.get_hurtbox()
+            if bowser_hitbox and fb.get_hitbox().colliderect(bowser_hitbox):
                 print(f"[DEBUG] Fireball hit Bowser!")
-                fb.alive = False
-                bowser.is_blocking = False  # Force Bowser out of block so hit animation plays
-                bowser.health = max(0, bowser.health - 15)  # Tripled damage from 5 to 15
-                bowser.is_in_hitstun = True
-                bowser.hitstun_timer = bowser.hitstun_duration + ATTACK_HITSTUN_BUFFER_TICKS
-                bowser.start_hitstun_anim()
-                bowser.is_playing_hit = True
-
-        # Remove dead fireballs
-        fireballs[:] = [fb for fb in fireballs if fb.alive]
+                fireballs.remove(fb)
+                if not bowser.is_blocking:
+                    bowser.health -= 15
+                    bowser.start_hitstun_anim(30)
+                else:
+                    # Force Bowser out of block state and apply damage
+                    bowser.is_blocking = False
+                    bowser.health -= 15
+                    bowser.start_hitstun_anim(30)
+                break
         
-        print(f"[DEBUG] === GAME LOOP END ===")
+        # Fireball vs flameblast collision
+        for fb in fireballs[:]:
+            bowser_flameblast_hitbox = bowser.get_flameblast_hitbox()
+            if bowser_flameblast_hitbox and bowser.is_flameblasting and bowser.flameblast_phase == "stream":
+                if fb.get_hitbox().colliderect(bowser_flameblast_hitbox):
+                    print(f"[DEBUG] Fireball vs flameblast collision!")
+                    fireballs.remove(fb)
+                    bowser._end_flameblast()
+                    break
+        
+        # Update fireballs
+        for fb in fireballs[:]:
+            fb.update()
+            if fb.should_remove():
+                fireballs.remove(fb)
 
 def draw():
     # Draw Peach's Castle background scaled to cover the whole screen
@@ -2380,39 +2337,29 @@ def draw():
 def on_key_down(key):
     global game_state
     
-    print(f"[DEBUG] Key pressed: {key}")
-    
     if key == keys.SPACE and game_state == "menu":
         game_state = "playing"
-        print(f"[DEBUG] Game started")
     
     if game_state == "playing":
-        print(f"[DEBUG] Processing key in playing state: {key}")
         # Mario controls (WASD keys)
         if mario.is_in_hitstun:
-            print(f"[DEBUG] Mario in hitstun, ignoring key: {key}")
             return
         if key == keys.A:
-            print(f"[DEBUG] Mario moving left")
             mario.velocity_x = -3
             mario.facing_right = False
         elif key == keys.D:
-            print(f"[DEBUG] Mario moving right")
             mario.velocity_x = 3
             mario.facing_right = True
         elif key == keys.W and mario.on_ground:
-            print(f"[DEBUG] Mario jumping")
             mario.velocity_y = -12
             mario.on_ground = False
         elif key == keys.Z and not mario.is_blocking:
-            print(f"[DEBUG] Mario hammer attack")
             # Trigger Mario hammer attack
             mario.is_attacking = True
             mario.attack_frame_index = 0
             mario.attack_timer = 0
             mario.attack_has_hit = False
         elif key == keys.X and not mario.is_blocking and not mario.is_special:
-            print(f"[DEBUG] Mario special attack")
             # Trigger Mario special (charge then fireball) - automatic charging for 2.5 seconds
             mario.is_special = True
             mario.special_phase = "charge"
@@ -2425,7 +2372,6 @@ def on_key_down(key):
             mario.special_charge_tail_loop = False  # Reset charge tail loop
             mario.special_charge_tail_start = 0  # Reset charge tail start
         elif key == keys.C:
-            print(f"[DEBUG] Mario blocking")
             # Mario block (hold)
             mario.is_blocking = True
             mario.block_index = 0
@@ -2433,22 +2379,17 @@ def on_key_down(key):
         
         # Bowser controls (Arrow keys)
         if bowser.is_in_hitstun:
-            print(f"[DEBUG] Bowser in hitstun, ignoring key: {key}")
             pass
         elif key == keys.LEFT:
-            print(f"[DEBUG] Bowser moving left")
             bowser.velocity_x = -3
             bowser.facing_right = False
         elif key == keys.RIGHT:
-            print(f"[DEBUG] Bowser moving right")
             bowser.velocity_x = 3
             bowser.facing_right = True
         elif key == keys.UP and bowser.on_ground:
-            print(f"[DEBUG] Bowser jumping")
             bowser.velocity_y = -9  # Bowser jumps lower than Mario
             bowser.on_ground = False
         elif key == keys.PERIOD and not bowser.is_in_hitstun and not bowser.is_flameblasting and not bowser.is_blocking and not bowser.is_charging:  # . key for flameblast charge
-            print(f"[DEBUG] Bowser flameblast charge")
             # Start charging phase - automatic charging for 1.5 seconds
             bowser.is_charging = True
             bowser.charge_start_time = 0
@@ -2458,37 +2399,29 @@ def on_key_down(key):
             bowser.flameblast_charge_timer = 0  # Reset charge timer
         elif ((getattr(keys, 'SLASH', None) is not None and key == keys.SLASH) or
               (hasattr(pygame, 'K_SLASH') and key == pygame.K_SLASH)) and not bowser.is_in_hitstun and not bowser.is_blocking:  # '/' key for Bowser punch
-            print(f"[DEBUG] Bowser punch attack")
             bowser.is_attacking = True
             bowser.attack_frame_index = 0
             bowser.attack_timer = 0
             bowser.attack_has_hit = False
         elif key == keys.COMMA and not bowser.is_in_hitstun and not bowser.is_flameblasting and not bowser.is_blocking and not bowser.is_charging:  # , key for Bowser block
-            print(f"[DEBUG] Bowser blocking")
             bowser.is_blocking = True
             bowser.block_index = 0
             bowser.block_timer = 0
         # Bowser flameblast stream cancel
         elif key == keys.PERIOD and bowser.is_flameblasting and bowser.flameblast_phase == "stream":
-            print(f"[DEBUG] Bowser flameblast stream cancel")
             # Cancel the stream early by pressing PERIOD again
             bowser._end_flameblast()
 
 def on_key_up(key):
     if game_state == "playing":
-        print(f"[DEBUG] Key released: {key}")
         # Mario controls (WASD)
         if mario.is_in_hitstun:
-            print(f"[DEBUG] Mario in hitstun, ignoring key release: {key}")
             pass
         elif key == keys.A and mario.velocity_x < 0:
-            print(f"[DEBUG] Mario stopped moving left")
             mario.velocity_x = 0
         elif key == keys.D and mario.velocity_x > 0:
-            print(f"[DEBUG] Mario stopped moving right")
             mario.velocity_x = 0
         elif key == keys.C:
-            print(f"[DEBUG] Mario stopped blocking")
             # Release Mario block
             mario.is_blocking = False
             mario.block_index = 0
@@ -2496,16 +2429,12 @@ def on_key_up(key):
         
         # Bowser controls (Arrow keys)
         elif bowser.is_in_hitstun:
-            print(f"[DEBUG] Bowser in hitstun, ignoring key release: {key}")
             pass
         elif key == keys.LEFT and bowser.velocity_x < 0:
-            print(f"[DEBUG] Bowser stopped moving left")
             bowser.velocity_x = 0
         elif key == keys.RIGHT and bowser.velocity_x > 0:
-            print(f"[DEBUG] Bowser stopped moving right")
             bowser.velocity_x = 0
         elif key == keys.COMMA:
-            print(f"[DEBUG] Bowser stopped blocking")
             # Release Bowser block
             bowser.is_blocking = False
             bowser.block_index = 0
