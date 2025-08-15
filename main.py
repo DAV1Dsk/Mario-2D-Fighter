@@ -409,12 +409,13 @@ class Mario:
                 else:
                     self.is_playing_hit = False
 
-    def start_hitstun_anim(self):
+    def start_hitstun_anim(self, duration=None):
         if self.hit_frames:
             self.is_playing_hit = True
             self.hit_anim_index = 0
             self.hit_anim_timer = 0
-            self._hit_linger_timer = self.hitstun_linger
+            # Use custom duration if provided, otherwise use default
+            self._hit_linger_timer = duration if duration is not None else self.hitstun_linger
 
     def _start_hit_linger(self):
         self._hit_linger_timer = self.hitstun_linger
@@ -586,6 +587,7 @@ class Mario:
             self.hit_frames = []
 
     def _prepare_stand_frames(self):
+        """Prepare stand animation frames and set the actor's _surf attribute"""
         frames = []
         for name in self.stand_frames:
             try:
@@ -636,8 +638,18 @@ class Mario:
                 except Exception:
                     # Skip missing or invalid frames silently
                     pass
+        
+        # Store the frames and set the actor's _surf attribute
         self.stand_surfaces = frames
-
+        if frames:
+            first = frames[0]
+            self.actor._surf = first
+            # Update actor dimensions to match first frame
+            self.actor.width = first.get_width()
+            self.actor.height = first.get_height()
+            self.half_width = self.actor.width / 2
+            self.half_height = self.actor.height / 2
+    
     def _prepare_special_frames(self):
         try:
             sheet = pygame.image.load("images/mario_special.png").convert()
@@ -1041,6 +1053,7 @@ class Bowser:
         
         # Create actor for current frame (stand images)
         self.stand_frames = ["bowser_stand1", "bowser_stand2"]
+        self.stand_surfaces = []  # Will be populated by _prepare_stand_frames()
         self.actor = Actor(self.stand_frames[0])
         self.half_height = self.actor.height / 2
         self.half_width = self.actor.width / 2
@@ -1101,10 +1114,75 @@ class Bowser:
         self.block_speed = 6
         
         # Prepare animation frames
+        self._prepare_stand_frames()
         self._prepare_hit_frames()
         self._prepare_punch_frames()
         self._prepare_flameblast_frames()
         self._prepare_block_frames()
+    
+    def _prepare_stand_frames(self):
+        """Prepare stand animation frames and set the actor's _surf attribute"""
+        frames = []
+        for name in self.stand_frames:
+            try:
+                surf = pygame.image.load(f"images/{name}.png").convert()
+                # Treat background color as transparent to isolate sprites in sheets with solid BG
+                bg = surf.get_at((0, 0))
+                surf.set_colorkey(bg)
+                mask = pygame.mask.from_surface(surf)
+                w, h = surf.get_width(), surf.get_height()
+                visited = set()
+                largest_bounds = None
+                largest_size = 0
+                # Connected-components over mask to find the single largest sprite cluster
+                for x in range(w):
+                    for y in range(h):
+                        if mask.get_at((x, y)) and (x, y) not in visited:
+                            stack = [(x, y)]
+                            visited.add((x, y))
+                            minx = maxx = x
+                            miny = maxy = y
+                            size = 0
+                            while stack:
+                                cx, cy = stack.pop()
+                                size += 1
+                                if cx < minx: minx = cx
+                                if cx > maxx: maxx = cx
+                                if cy < miny: miny = cy
+                                if cy > maxy: maxy = cy
+                                for nx, ny in ((cx - 1, cy), (cx + 1, cy), (cx, cy - 1), (cx, cy + 1)):
+                                    if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in visited and mask.get_at((nx, ny)):
+                                        visited.add((nx, ny))
+                                        stack.append((nx, ny))
+                            if size > largest_size:
+                                largest_size = size
+                                largest_bounds = (minx, miny, maxx, maxy)
+                if largest_bounds:
+                    x0, y0, x1, y1 = largest_bounds
+                    rect = pygame.Rect(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
+                    frame = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+                    frame.blit(surf, (0, 0), rect)
+                    frames.append(frame.convert_alpha())
+                else:
+                    # Fallback: keep as-is with alpha
+                    frames.append(surf.convert_alpha())
+            except Exception:
+                try:
+                    frames.append(pygame.image.load(f"images/{name}.png").convert_alpha())
+                except Exception:
+                    # Skip missing or invalid frames silently
+                    pass
+        
+        # Store the frames and set the actor's _surf attribute
+        self.stand_surfaces = frames
+        if frames:
+            first = frames[0]
+            self.actor._surf = first
+            # Update actor dimensions to match first frame
+            self.actor.width = first.get_width()
+            self.actor.height = first.get_height()
+            self.half_width = self.actor.width / 2
+            self.half_height = self.actor.height / 2
     
     def update(self):
         # If in hitstun, skip only flameblast state machine logic, but run the rest of update
@@ -1470,12 +1548,13 @@ class Bowser:
                 # Ultimate fallback: create a simple rectangular mask
                 return pygame.mask.Mask((surf.get_width(), surf.get_height()), True)
 
-    def start_hitstun_anim(self):
+    def start_hitstun_anim(self, duration=None):
         if self.hit_frames:
             self.is_playing_hit = True
             self.hit_anim_index = 0
             self.hit_anim_timer = 0
-            self._hit_linger_timer = self.hitstun_linger
+            # Use custom duration if provided, otherwise use default
+            self._hit_linger_timer = duration if duration is not None else self.hitstun_linger
 
     def _start_hit_linger(self):
         # called when leaving hitstun; ensure animation lingers a bit
@@ -2165,7 +2244,7 @@ def update():
                 bowser_hitbox = bowser.get_hurtbox()
                 if bowser_hitbox:
                     # Convert hitbox to mask for pixel-perfect collision
-                    bowser_surf = bowser.actor.image
+                    bowser_surf = bowser.actor._surf if hasattr(bowser.actor, '_surf') else bowser.actor.image
                     bowser_mask = pygame.mask.from_surface(bowser_surf)
                     # Calculate offset between attack mask and bowser surface
                     offset_x = int(ax - (bowser.x - bowser_surf.get_width() / 2))
@@ -2209,7 +2288,8 @@ def update():
             if mario_hitbox and bowser_flameblast_hitbox.colliderect(mario_hitbox):
                 if not mario.is_blocking:
                     print(f"[DEBUG] Mario hit by flameblast!")
-                    mario.health -= 25
+                    # Apply continuous damage at 7.5 HP per second (assuming 60 FPS)
+                    mario.health -= (7.5 / 60.0)
                     mario.start_hitstun_anim(45)
         
         # Fireball vs Bowser collision
@@ -2241,7 +2321,7 @@ def update():
         # Update fireballs
         for fb in fireballs[:]:
             fb.update()
-            if fb.should_remove():
+            if not fb.alive:
                 fireballs.remove(fb)
 
 def draw():
@@ -2314,15 +2394,17 @@ def draw():
             fb.draw()
             # screen.draw.rect(fb.get_hitbox(), (255, 0, 0))
         
-        # Draw Mario health bar with castle-themed colors
+        # Draw Mario health bar with castle-themed colors (integer-only display)
+        mario_hp_int = max(0, int(mario.health))
         screen.draw.filled_rect(Rect(50, 50, 160, 16), (139, 69, 19))  # Brown background
-        screen.draw.filled_rect(Rect(50, 50, int(mario.health * (160/500)), 16), (255, 215, 0))  # Gold health scaled to 500 max
-        screen.draw.text("Mario HP: " + str(mario.health), (50, 30), color="white", fontsize=24)
+        screen.draw.filled_rect(Rect(50, 50, int(mario_hp_int * (160/500)), 16), (255, 215, 0))  # Gold health scaled to 500 max
+        screen.draw.text("Mario HP: " + str(mario_hp_int), (50, 30), color="white", fontsize=24)
         
-        # Draw Bowser health bar with castle-themed colors
+        # Draw Bowser health bar with castle-themed colors (integer-only display)
+        bowser_hp_int = max(0, int(bowser.health))
         screen.draw.filled_rect(Rect(WIDTH - 210, 50, 160, 16), (139, 69, 19))  # Brown background
-        screen.draw.filled_rect(Rect(WIDTH - 210, 50, int(bowser.health * (160/500)), 16), (255, 69, 0))  # Orange-red health scaled to 500 max
-        screen.draw.text("Bowser HP: " + str(bowser.health), (WIDTH - 210, 30), color="white", fontsize=24)
+        screen.draw.filled_rect(Rect(WIDTH - 210, 50, int(bowser_hp_int * (160/500)), 16), (255, 69, 0))  # Orange-red health scaled to 500 max
+        screen.draw.text("Bowser HP: " + str(bowser_hp_int), (WIDTH - 210, 30), color="white", fontsize=24)
     
     elif game_state == "menu":
         # Add semi-transparent overlay for better text readability
@@ -2350,7 +2432,7 @@ def on_key_down(key):
         elif key == keys.D:
             mario.velocity_x = 3
             mario.facing_right = True
-        elif key == keys.W and mario.on_ground:
+        elif key == keys.W and mario.on_ground and not mario.is_playing_hit:
             mario.velocity_y = -12
             mario.on_ground = False
         elif key == keys.Z and not mario.is_blocking:
